@@ -1,0 +1,12 @@
+{"timestamp": "2025-11-17 02:06:58,911", "level": "INFO", "message": "--mode:scan,--path:./exsample_files,--regex:./data/regex/merged_rules.json, --entropy_path:./data/entropy_result.bin, --save_name:tmp_result,--size_limit10485760"}
+{"timestamp": "2025-11-17 02:07:06,091", "level": "INFO", "message": "{'error': AttributeError(\"module 'signal' has no attribute 'SIGALRM'\"), 'scaned_file_path': 'D:\\\\Use"}
+{"timestamp": "2025-11-17 02:07:06,092", "level": "INFO", "message": "{'error': AttributeError(\"module 'signal' has no attribute 'SIGALRM'\"), 'scaned_file_path': 'D:\\\\Use"}
+{"timestamp": "2025-11-17 02:07:06,092", "level": "INFO", "message": "{'error': AttributeError(\"module 'signal' has no attribute 'SIGALRM'\"), 'scaned_file_path': 'D:\\\\Use"}
+{"timestamp": "2025-11-17 02:07:06,094", "level": "INFO", "message": "{'error': AttributeError(\"module 'signal' has no attribute 'SIGALRM'\"), 'scaned_file_path': 'D:\\\\Use"}
+{"timestamp": "2025-11-17 02:07:06,111", "level": "INFO", "message": "{'error': AttributeError(\"module 'signal' has no attribute 'SIGALRM'\"), 'scaned_file_path': 'D:\\\\Use"}
+{"timestamp": "2025-11-17 02:07:06,111", "level": "INFO", "message": "{'error': AttributeError(\"module 'signal' has no attribute 'SIGALRM'\"), 'scaned_file_path': 'D:\\\\Use"}
+{"timestamp": "2025-11-17 02:07:06,122", "level": "INFO", "message": "{'error': AttributeError(\"module 'signal' has no attribute 'SIGALRM'\"), 'scaned_file_path': 'D:\\\\Use"}
+{"timestamp": "2025-11-17 02:07:06,125", "level": "INFO", "message": "{'error': AttributeError(\"module 'signal' has no attribute 'SIGALRM'\"), 'scaned_file_path': 'D:\\\\Use"}
+{"timestamp": "2025-11-17 02:07:06,129", "level": "INFO", "message": "{'error': AttributeError(\"module 'signal' has no attribute 'SIGALRM'\"), 'scaned_file_path': 'D:\\\\Use"}
+{"timestamp": "2025-11-17 02:07:06,131", "level": "INFO", "message": "{'error': AttributeError(\"module 'signal' has no attribute 'SIGALRM'\"), 'scaned_file_path': 'D:\\\\Use"}
+{"timestamp": "2025-11-17 02:07:17,304", "level": "INFO", "message": "time_wasted:18.391076803207397"}

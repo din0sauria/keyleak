@@ -1,0 +1,193 @@
+!function(t) {
+    t && t.__esModule;
+}(require("../../../utils/config.js"));
+
+var t, e = getApp(), a = (require("../../../utils/api.js"), require("../../../utils/wxRequest.js"), 
+require("../../../utils/mta_analysis.js"), require("../../../utils/qqmap-wx-jssdk.min.js"));
+
+Page({
+    data: {
+        optionsData: {
+            id: "",
+            name: "",
+            phone: "",
+            province: "",
+            city: "",
+            area: "",
+            street: "",
+            lat: 0,
+            lng: 0,
+            postcode: ""
+        },
+        addressSearch: [],
+        listSelected: -1,
+        selectedAddress: []
+    },
+    onLoad: function(e) {
+        var i = this;
+        e.id && this.setData({
+            "optionsData.id": e.id
+        }), t = new a({
+            key: "7OQBZ-2DDK6-S3XS6-MP27C-IAUPF-AGFCZ"
+        }), i.init();
+    },
+    init: function() {
+        this.getStorage();
+    },
+    getStorage: function() {
+        var t = this, e = t.data.optionsData;
+        wx.getStorage({
+            key: "kaijiangaddress",
+            success: function(a) {
+                e.street = a.data.street, e.lat = a.data.lat, e.lng = a.data.lng, e.name = a.data.name, 
+                e.area = a.data.area, e.weixin = a.data.weixin, e.postcode = a.data.postcode, e.city = a.data.city, 
+                e.province = a.data.province, e.phone = a.data.phone, t.setData({
+                    optionsData: e
+                }), t.reverseGeocoder();
+            },
+            fail: function(t) {
+                console.log("此时未取到地点缓存");
+            }
+        });
+    },
+    buildIcon: function(t, e) {
+        var a = [];
+        a.push({
+            latitude: t,
+            longitude: e,
+            iconPath: "/home/images/address_icon.png",
+            width: 13,
+            height: 18
+        }), this.setData({
+            markers: a
+        });
+    },
+    reverseGeocoder: function() {
+        var e = this, a = e.data.optionsData, i = e.data.addressSearch;
+        "" != e.data.optionsData.id ? t.reverseGeocoder({
+            get_poi: 1,
+            poi_options: "policy=2",
+            location: {
+                latitude: a.lat,
+                longitude: a.lng
+            },
+            success: function(t) {
+                var o = t.result;
+                i = o.pois, e.setData({
+                    addressSearch: i
+                }), e.buildIcon(a.lat, a.lng);
+            },
+            fail: function(t) {
+                console.log(t);
+            },
+            complete: function(t) {
+                console.log(t);
+            }
+        }) : t.reverseGeocoder({
+            get_poi: 1,
+            poi_options: "policy=2",
+            success: function(t) {
+                var o = t.result;
+                a.lat = o.location.lat, a.lng = o.location.lng, i = o.pois, e.setData({
+                    "optionsData.lat": a.lat,
+                    "optionsData.lng": a.lng,
+                    addressSearch: i
+                }), e.buildIcon(a.lat, a.lng);
+            },
+            fail: function(t) {
+                console.log(t);
+            },
+            complete: function(t) {}
+        });
+    },
+    chooseAddress: function(t) {
+        var e = this, a = (e.data.optionsData, t.currentTarget.dataset);
+        e.setData({
+            listSelected: a.classify,
+            selectedAddress: a.info,
+            "optionsData.lat": a.info.location.lat,
+            "optionsData.lng": a.info.location.lng,
+            "selectedAddress.title": a.info.title
+        }), e.buildIcon(a.info.location.lat, a.info.location.lng);
+    },
+    getSuggestion: function(e) {
+        var a = this, i = this.data.addressSearch;
+        e.detail ? t.getSuggestion({
+            keyword: e.detail.value,
+            success: function(t) {
+                var e = t.data;
+                i = e, a.setData({
+                    listSelected: -1,
+                    addressSearch: i
+                });
+            },
+            fail: function(t) {},
+            complete: function(t) {}
+        }) : t.getSuggestion({
+            keyword: e,
+            success: function(t) {
+                var e = t.data;
+                i = e, a.setData({
+                    listSelected: -1,
+                    addressSearch: i
+                });
+            },
+            fail: function(t) {},
+            complete: function(t) {}
+        });
+    },
+    searchInputClear: function() {
+        this.setData({
+            "selectedAddress.title": ""
+        });
+    },
+    submitSelected: function(t) {
+        var e = this, a = e.data.optionsData, i = e.data.selectedAddress;
+        i.location && -1 != e.data.listSelected ? i.ad_info ? wx.setStorage({
+            key: "kaijiangaddress",
+            data: {
+                city: i.ad_info.city,
+                area: i.ad_info.district,
+                province: i.ad_info.province,
+                street: i.title,
+                lat: i.location.lat,
+                lng: i.location.lng,
+                name: a.name,
+                phone: a.phone,
+                weixin: a.weixin,
+                postcode: a.postcode
+            },
+            success: function() {
+                wx.navigateBack();
+            },
+            fail: function() {
+                console.log("submitSelected方法失败");
+            }
+        }) : wx.setStorage({
+            key: "kaijiangaddress",
+            data: {
+                city: i.city,
+                province: i.province,
+                area: i.district,
+                street: i.title,
+                lat: i.location.lat,
+                lng: i.location.lng,
+                name: a.name,
+                phone: a.phone,
+                weixin: a.weixin,
+                postcode: a.postcode
+            },
+            success: function() {
+                wx.navigateBack();
+            },
+            fail: function() {
+                console.log("submitSelected方法失败");
+            }
+        }) : wx.navigateBack();
+    },
+    onShareAppMessage: function() {
+        var t = e.getAppInfo().share_info.home, a = Math.floor(Math.random() * t.image_url.length), i = Math.floor(Math.random() * t.title.length), o = {}, n = this.data.tabBarShow, s = this.data.shareInfo;
+        return "recommend" == n ? (o.imageUrl = s.banner, o.title = s.title) : (o.imageUrl = t.image_url[a], 
+        o.title = t.title[i]), o.path = "/home/pages/index/index?type=index", o;
+    }
+});

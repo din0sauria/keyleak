@@ -1,0 +1,11 @@
+{"timestamp": "2025-11-12 18:16:34,983", "level": "INFO", "message": "--mode:scan,--path:./exsample_files,--regex:./data/regex/merged_rules.json, --entropy_path:./data/en"}
+{"timestamp": "2025-11-12 18:16:35,775", "level": "INFO", "message": "{'scaned_file_path': '/root/dino/datacon2025/exsample_files/e7e1e7b1f61fb03eb1907eab5dd35bbc', 'hit'"}
+{"timestamp": "2025-11-12 18:16:35,815", "level": "INFO", "message": "{'scaned_file_path': '/root/dino/datacon2025/exsample_files/6047db89b7e0b4699b3e859a90b5c675', 'hit'"}
+{"timestamp": "2025-11-12 18:16:36,076", "level": "INFO", "message": "{'scaned_file_path': '/root/dino/datacon2025/exsample_files/9951d9f5176082eba3342d9c829243b3', 'hit'"}
+{"timestamp": "2025-11-12 18:16:36,174", "level": "INFO", "message": "{'scaned_file_path': '/root/dino/datacon2025/exsample_files/8ed86c7ae7c0519f15768186ddd362c0', 'hit'"}
+{"timestamp": "2025-11-12 18:16:36,270", "level": "INFO", "message": "{'scaned_file_path': '/root/dino/datacon2025/exsample_files/5a87968a62ae8fb5f873151a4dee5424', 'hit'"}
+{"timestamp": "2025-11-12 18:16:36,360", "level": "INFO", "message": "{'scaned_file_path': '/root/dino/datacon2025/exsample_files/672956a75faec181adfb7bbc1cb13a5f', 'hit'"}
+{"timestamp": "2025-11-12 18:16:36,373", "level": "INFO", "message": "{'scaned_file_path': '/root/dino/datacon2025/exsample_files/4421036dba97642ff1ae50015883a792', 'hit'"}
+{"timestamp": "2025-11-12 18:16:36,814", "level": "INFO", "message": "{'scaned_file_path': '/root/dino/datacon2025/exsample_files/5535562e0acdf3e60729e88f0f9873bc', 'hit'"}
+{"timestamp": "2025-11-12 18:16:37,544", "level": "INFO", "message": "{'scaned_file_path': '/root/dino/datacon2025/exsample_files/d5490d80b8153f5ff9fff766627c5aae', 'hit'"}
+{"timestamp": "2025-11-12 18:16:40,385", "level": "INFO", "message": "time_wasted:5.400912523269653"}
