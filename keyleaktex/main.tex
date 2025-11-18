@@ -1,0 +1,1393 @@
+\documentclass[article]{style}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{makecell}
+\usepackage{booktabs}
+\usepackage{minted}
+\usepackage{xcolor}
+\usepackage{tcolorbox}
+\usepackage{fontspec}
+\usepackage{framed}
+
+\tcbuselibrary{breakable}
+\tcbuselibrary{skins}
+\tcbuselibrary{minted}
+\usemintedstyle{lovelace}
+\title{DataCon2025软件供应链安全赛道题解}
+\author{\fontsize{14pt}\selectfont 武汉大学 - 哈基龙战队}
+\date{2025年11月13日}
+
+\begin{document}
+
+\maketitle
+
+\vspace{6em}
+
+\makecontents
+
+\section{问题重述}
+
+随着开源协作与持续集成流程的广泛应用，密钥泄露事件愈发频繁，各类文本文件中常常埋藏着 API Token、访问密钥等敏感凭证。我们需要分析数据集，开发自动化检测工具，尽可能发现潜在密钥并有效减少误报。
+
+\section{题目分析及相关工作}
+
+\subsection{题目数据集分析}
+
+本次赛题提供的数据集贴近真实环境，具有以下特点：
+\begin{itemize}
+    \item 数据规模大：包含海量文件（如源代码、配置文件、日志、数据等）；
+    \item 分布广泛：密钥可能出现在任意文件类型或目录结构中；
+    \item 类型复杂：数据集中密钥形式多样，还加入了若干构造性密钥，经过拼接、更长间距的上下文和特殊字符，难以通过简单正则匹配捕获。
+\end{itemize}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{assert/file_type_distribution.png}
+    \caption{文件类型统计结果}
+\end{figure}
+我们使用了python-magic库和内容关键词来判断文件类型，结果如图。其中配置文件、文本类型和代码类型各占约1/4，剩下的还有各类数据文件。
+
+\subsection{密钥分析}
+\subsubsection{密钥格式特征}
+我们将用于身份验证、数据库访问、API 接口调用等功能的所有凭据（credentials）统称为“密钥”（secrets）。这些密钥主要可分为两类：\textbf{机器生成的密钥} 和 \textbf{人类选择的密钥}。
+机器生成的密钥通常由加密算法或随机数生成器创建，具有高度随机性且缺乏语义含义；而人类选择的密钥则由用户自行设定，往往包含可识别的信息或有意义的内容（如姓名、生日等）。\cite{11023280}
+
+机器生成的密钥可根据其格式特征划分为 \textbf{结构化} 与 \textbf{非结构化} 两类。结构化密钥具有明显的语法模式，例如 Qwen API 密钥通常以 sk- 开头。相比之下，部分机器生成的密钥（如 OpenCage 地理编码 API 使用的固定长度 30 位字母数字密钥）则完全随机，无明显结构特征。\cite{2022Deep}
+
+人类选择的密钥由于其语义性和主观性，通常也被归为非结构化类型。
+
+\subsubsection{密钥泄露方式}
+
+\begin{itemize}
+    \item \textbf{文本类文件}：密钥不仅可以存在于代码中，还会出现在注释、文档、配置文件等非传统位置。
+    \item \textbf{二进制文件}：密钥也可以嵌入在二进制文件中，对于明文存储的可直接读出，加密存储的可以通过逆向工程等方式获得。
+    \item \textbf{AI代码工具}：使用copilot等AI代码插件，或与在线LLM对话，会将代码直接发送到云端，其中就可能包含密钥。
+\end{itemize}
+
+
+\subsection{密钥检测方法}
+\subsubsection{检测工具}
+
+\begin{table}[h!]
+    \centering
+    \caption{秘钥检测工具对比表}
+    \label{tools}
+    \begin{tabular}{ccccccccc}
+    \hline
+    \textbf{工具名称} & \textbf{多因子检测} & \textbf{仍在维护} & \textbf{公开规则数} & \textbf{Star 数} & \textbf{过滤方法} \\
+    \hline
+    Ggshield & √ & √ & × & 1,500 & × \\
+    TruffleHog & √ & √ & √ & 13,200 & 熵值 \\
+    Repo-supervisor & × & × & × & 631 & 白名单, 熵值 \\
+    Gitleaks & √ & × & √ & 14,600 & 白名单, 熵值 \\
+    Whispers & √ & × & √ & 468 & 白名单, 相似度 \\
+    Git-secret & √ & × & × & 11,800 & 未公开 \\
+    KEYSENTINEL & √ & √ & √ & 34 & 语义分析 , 熵值 , 白名单 \\
+    \hline
+    \end{tabular}
+    \end{table}
+
+\subsubsection{密钥提取}
+密钥提取涉及识别各种文件中的潜在秘钥。大多数工具使用正则表达式和熵检查来提取密钥。Gitleaks  和 TruffleHog  等工具依赖于熵和前缀匹配等，这通常会导致高误报率。\cite{How}
+KEYSENTINEL通过结合多种检测方法（机器学习、语义分析和前缀匹配）能够提高提取的准确性。\cite{DBLP}
+
+构造密钥的方法有很多种，例如拼接、更长间距的上下文、特殊字符等。这些方法都会使传统方法难以识别，需要借助LLM。\cite{LYKOUSAS2024103974}
+
+\subsubsection{密钥过滤}
+由于并非所有提取的字符串都代表真正的密钥，因此需要进行密钥过滤才能从提取的候选字符串中找到真正的密钥。此外，人类生成的密码给基于熵的过滤器带来了挑战，因为它们通常缺乏可识别的模式。
+
+
+\section{解题思路1：基于开源工具的改进}
+
+\subsection{基于开源工具的解答}
+
+我们选用了主流的开源工具KEYSENTINEL、Gitleaks、TruffleHog，对样本进行扫描，并对结果进行处理然后提交。其中KEYSENTINEL表现最佳，误报最少。由于后面方法的答案合并了前面方法的答案，所以与只使用该方法得到的结果会不一致（为了减小提交次数没有单独测试）。
+
+\begin{table}[h!]
+\centering
+\caption{检测工具性能对比}
+\begin{tabular}{lccc}
+\toprule
+工具名称 & F1 分数\\
+\midrule
+KEYSENTINEL & 0.56633 \\
+Gitleaks(+KEYSENTINEL) & 0.32849 \\
+TruffleHog(+KEYSENTINEL+Gitleaks) & 0.13221 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{对于KEYSENTINEL的分析}
+
+为了获得更高的分数，我们阅读了KEYSENTINEL的论文《Hey, Your Secrets Leaked! Detecting and Characterizing Secret Leakage in the Wild》，并对KEYSENTINEL的实现进行了分析。
+
+\begin{figure}[!htb]
+    \centering
+    \includegraphics[width=0.9\textwidth]
+    {assert/image.png}\\
+    \caption{KEYSENTINEL结构图}
+\end{figure}
+
+KEYSENTINEL 由两个主要模块组成：秘钥提取和秘钥过滤，包含六个过滤器（T1 到 T6）。秘钥提取模块首先根据先前的研究和工具选择前缀并构建正则表达式 （0）。然后，这些正则表达式用于扫描文件并提取潜在的机密 （2）。之后，合并重复的密钥 （3）。最后，KEYSENTINEL 提取一组候选密钥。密钥过滤模块从字符串辅助 （Str-assisted） 过滤器 （T1） 开始，该过滤器解析字符串并将其与候选密钥 （0） 匹配，然后根据其类别和结构进一步过滤。
+
+机器生成的密钥经过模式过滤器 （T2）、分段熵 （Seg-Entropy） 过滤器 （T3） 和基于标记化的语义 （TBS） 过滤器 （T4） 进行选择 （5）。使用密码 （PWD） 过滤器 （T5） 筛选人类选择的密钥以排除非密钥 （6），而使用前缀过滤器 （T6） 评估非结构化密钥以减少误报 （7）。未通过任何筛选的机密将标记为非机密，其余有效候选机密将按相似性合并 （7）。
+
+\subsubsection{密钥提取}
+
+使用正则表达式用于扫描文件并提取潜在的密钥。之后，由于单个文本可能与多个模式匹配，识别最长的子字符串，并相应地合并密钥。
+
+\subsubsection{密钥过滤}
+
+我们对代码中各种数据文件在密钥检测中的匹配方式和用途进行了分析：
+
+1. 模式匹配
+
+\begin{itemize}
+    \item 子字符串匹配
+    \item 逐行读取文件中的模式
+    \item 对每个模式检查是否在密钥值中出现（不区分大小写）
+    \item 对于包含PRIVATE KEY的值，采用严格匹配（区分大小写）
+    \item 对于其他值，采用不区分大小写的匹配
+\end{itemize}
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    minted language=python,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+# 在 filter_patterns 函数中，数据来自patterns.txt
+for pattern in patterns:
+    if ('PRIVATE KEY' in value):       # 对private key
+        if pattern in value:           # 严格匹配
+            return True
+        else:
+            return False
+    elif pattern.lower() in value.lower():  # 不区分大小写匹配
+        return True
+\end{tcblisting}
+
+2. 关键词匹配
+
+\begin{itemize}
+    \item 逐行读取Excel文件中的关键词
+    \item 对每个关键词检查是否在密钥值中出现（不区分大小写）
+    \item 忽略包含PRIVATE KEY或http的值
+\end{itemize}
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    minted language=python,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+# 在 filter_words 函数中,数据来自target_words.xlsx
+for word in words_list:
+    if word.lower() in value.lower():  # 不区分大小写匹配
+        return True
+\end{tcblisting}
+
+3. 英语词汇匹配
+
+\begin{itemize}
+    \item 使用wordninja库分割密钥字符串为单词
+    \item 对分割后的单词与词汇表进行精确匹配
+    \item 计算真实单词在密钥中的占比，超过阈值则认为是有意义的文本而非密钥
+\end{itemize}
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    minted language=python,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+# 在 count_dictionary_words 函数中,数据来自fixed_top_english_words_mixed_500000.json
+words = split_word(secret_match, words_list)  # 使用wordninja分割单词
+
+for key in words_list:
+    if key in value_list:  # 精确匹配
+        # 计算单词权重
+        if (secret['word_weight']/len(secret_match)) > 0.35:
+            have_meaning = True
+            return secret, have_meaning
+\end{tcblisting}
+
+4. 混淆词匹配
+
+\begin{itemize}
+    \item 后缀匹配
+    \item 用于键值对过滤器中
+    \item 检查密钥是否以这些容易混淆的词结尾
+    \item 如果密钥包含这些词且与前缀相关，则认为是合法密钥
+\end{itemize}
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    minted language=python,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+# 在 filter_prefix 函数中,数据来自end_confuse_words.txt
+for tmp in confusion_list:
+    if tmp.lower() in key_list_lower and prefix.lower() in tmp:
+        return True  # 是混淆词，过滤掉
+\end{tcblisting}
+
+5. 文件扩展名匹配
+
+\begin{itemize}
+    \item 用于键值对过滤器中
+    \item 检查密钥是否以文件扩展名结尾
+    \item 如果是，则认为是文件路径而非密钥
+\end{itemize}
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    minted language=python,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+# 在 key_value_filter_single 函数中,数据来自file_extension.txt
+if any(key_value.endswith(ext) for ext in file_extention):
+    return False  # 以文件扩展名结尾，过滤掉
+\end{tcblisting}
+
+6. 合法结尾词匹配
+
+\begin{itemize}
+    \item 包含常见的合法结尾词及其出现频率
+    \item 用于键值对过滤器中，检查密钥结尾是否为这些合法词
+    \item 如果是，则可能是合法的键值对而非密钥
+\end{itemize}
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    minted language=python,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+# 加载并添加到 list_right 列表中,数据来自end_right_words.txt
+list_right.extend([key for key, value in sorted_end_right_list_fasle_more20.items()])
+\end{tcblisting}
+
+7. 相似字符串过滤
+
+\begin{itemize}
+    \item 判断交集是否是子串
+    \item 判断通用类型密钥是否相似
+\end{itemize}
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    minted language=python,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+    def compare_secret_similarstr(group1, group2):
+  
+    #判断交集是否是子串————————————————————反正都是直接用index来比较
+    start1, end1 = group1["index_start"], group1["index_end"]  
+    start2, end2 = group2["index_start"], group2["index_end"]
+    if group1['value']==group2['value'] and start1==start2 :
+        if group2['series']=='generic':
+            return 2
+        else:
+            return 1   
+    # 判断是否有交集，如果相似，如果1号是通用返回1。否则返回2（两者是不同的密钥）
+    elif start1 <= end2 and start2 <= end1:
+        if(compare_secret(group1['value'],group2['value'])):
+            if (group1['series']=='generic'):
+                return 1
+            else:
+                return 2
+\end{tcblisting}
+
+8.熵值计算
+
+机器生成的 API key、私钥因随机性高而熵值高,用户自设的通用密码熵值低。\cite{Saha2020SecretsIS}据此可初步筛选密钥候选，再结合正则降低误报。
+
+\begin{itemize}
+    \item 统计每个字符的出现次数
+    \item 计算每个字符的概率
+    \item 计算熵值
+\end{itemize}
+
+\subsection{检测结果分析}
+
+为了提高检测效果，我们对检测结果进行了分析。
+
+\subsubsection{虚假密钥问题}
+
+虽然KEYSENTINEL已经考虑了这个问题，但在实际检测中，仍然有一些虚假密钥被检测出来。以下是KEYSENTINE检测结果中发现的一个虚假密钥。
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    minted language=json,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+    {
+        "file": "/opt/dlami/nvme/dino/keyleak/all_files_hash/9584d6deba29095e37e34f9d35b7e354",
+        "value": "yourpsk",
+        "match": " password: yourpsk\n",
+        "prefix": "password",
+        "rule_name": "generic-password",
+        "is_mechanical": "human",
+        "series": "generic",
+        "filter_count": [],
+        "word_weight": 0,
+        "line_start": 304,
+        "line_end": 305,
+        "col_start": 2,
+        "col_end": 1,
+        "index_start": 5477,
+        "index_end": 5487,
+        "regex": "(?i)(?:[0-9a-z]{0,20})(?:[\\-_ .]{0,1})(passwd|password|pwd)(?:[0-9a-z\\-_\\t .]{0,20})(?:[ |\\t|\\r|\\f|\\v|']|[ |\\t|\\r|\\f|\\v|\"]){0,3}(?:=|>|:{1,3}=|\\|\\|:|<=|=>|:|\\?=)(?:'|\\\"| |\\t|\\r|\\f|\\v|=|\\x60){0,5}([0-9a-z\\-_.=!@#$%^&*+~\\(\\{\\}\\)]{5,150})(?:['|\\\"|\\n|\\r|\\s|\\x60|;]|$)",
+        "need_keyvalue": false
+    }
+\end{tcblisting}
+
+我们发现虚假密钥主要有两类：一类是用来存储密钥的变量名，如key、secret、password等，这些变量名是常见的，但不是密钥。一类将真实密钥替换成样例密钥的情况，如example\_key、your\_key等，这些替换为样例密钥的做法也是常见的，也不能算作密钥泄露。
+
+虚假密钥可以通过对密钥值的关键词检测进行过滤。虽然KEYSENTINEL已经有类似的过滤器，但我们发现仍然有一些虚假密钥没有被过滤掉，我们通过人工标注，LLM生成等方式增加了过滤关键词数据库，降低了此类问题的误报。
+
+\subsubsection{上下文提示的虚假密钥问题}
+
+在一些情况下，密钥值本身看不出问题，但其上下文提示了它并不是一个真实的密钥。例如：
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    minted language=json,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+    {
+        "file": "/opt/dlami/nvme/dino/keyleak/all_files_hash/85cea76a95a8595495a5bf42584d91dc",
+        "value": "28P01",
+        "match": "invalid_password\": \"28P01\"",
+        "prefix": "password",
+        "rule_name": "generic-password",
+        "is_mechanical": "human",
+        "series": "generic",
+        "filter_count": [],
+        "word_weight": 0,
+        "line_start": 154,
+        "line_end": 154,
+        "col_start": 10,
+        "col_end": 36,
+        "index_start": 6324,
+        "index_end": 6334,
+        "regex": "(?i)(?:[0-9a-z]{0,20})(?:[\\-_ .]{0,1})(passwd|password|pwd)(?:[0-9a-z\\-_\\t .]{0,20})(?:[ |\\t|\\r|\\f|\\v|']|[ |\\t|\\r|\\f|\\v|\"]){0,3}(?:=|>|:{1,3}=|\\|\\|:|<=|=>|:|\\?=)(?:'|\\\"| |\\t|\\r|\\f|\\v|=|\\x60){0,5}([0-9a-z\\-_.=!@#$%^&*+~\\(\\{\\}\\)]{5,150})(?:['|\\\"|\\n|\\r|\\s|\\x60|;]|$)",
+        "need_keyvalue": false
+    }
+\end{tcblisting}
+
+这些可能来源于登录日志，错误日志等，虽然密钥值本身看不出问题，但日志的上下文提示了它不是一个真实的密钥，例如上面例子中的invalid\_password。我们可以通过增加对上下文的关键词过滤，过滤掉此类虚假密钥。
+
+注意：我们认为此类虚假密钥的泄露是危险的，因为攻击者可以利用这些错误信息很容易的猜解出密钥，因为他们包含了使用者设置密钥的规律和部分正确的密钥值。
+
+\subsection{对于KEYSENTINEL的改进}
+
+\subsubsection{正表达式数据扩充}
+
+我们查找了一些密钥检测工具的最新版本，包括gitleak和trufflehog等。我们将这些正则表达式合并去重到KEYSENTINEL的正则表达式数据库中。当然，增加正则表达式的好处是提高召回率，后果是增加误报概率。我们对检测结果分析，删除了误报数量较多的正则表达式。对于误报率一般的表达式，我们可以通过增加对上下文的关键词、键值，密钥关键词等过滤机制来抑制误报率。
+
+\subsubsection{密钥关键词过滤数据扩充}
+
+我们增加了密钥关键词过滤数据。我们通过参考其他密钥检测工具的数据、人工标注、LLM生成等方式增加了过滤关键词数据库。例如keyvar、secretvar、yourkey、examplekey等。
+
+\subsubsection{混淆词（后缀）过滤数据扩充}
+
+同样我们通过参考其他密钥检测工具的数据、人工标注、LLM生成等方式增加了混淆词数据库。我们发现常见的混淆词主要有Component(、replace(、get(等函数调用，还有var、readme等词语。
+
+\subsubsection{上文过滤机制增强}
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    minted language=python,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+    # 位于 def key_value_filter_single(single_hit):
+
+    # 从文件读取无效上下文列表
+    target_path = os.path.abspath(os.path.join(current_path, '../data/invalid_con.txt'))
+    try:
+        invalid_contexts = load_txt(target_path)
+        #invalid_pre = [prefix.lower() for prefix in invalid_pre]  # 可选：转换为小写以便比较
+    except:
+        # 如果文件不存在，使用默认列表
+        invalid_contexts = ["invalid"]
+
+    # 添加上下文过滤逻辑
+    for invalid_context in invalid_contexts:
+        if invalid_context in key_value.lower():
+            print(f"filter: invalid pre '{key_value}' in {tmp['match']}")
+            return False
+\end{tcblisting}
+
+\section{解题思路2：基于LLM的构造密钥检测}
+
+\subsection{背景}
+
+\subsubsection{为什么使用大模型}
+\begin{itemize}
+    \item \textbf{处理复杂模式：}构造密钥可能经过字符串拼接、分散在不同变量中或包含特殊字符，传统的正则匹配难以捕获这些复杂模式，而LLM能够理解代码的语义和上下文，从而更有效地识别这些构造密钥。
+    \item \textbf{误报较少：}相比传统的正则表达式方法，基于大语言模型的零样本学习方法能够更好地理解代码上下文，结合过滤机制显著减少误报率，同时保持高召回率。
+\end{itemize}
+
+\subsubsection{为什么使用零样本学习}
+
+\begin{itemize}
+    \item \textbf{数据稀缺性问题：}在代码安全检测领域，特别是构造密钥的样本非常有限且难以收集。零样本学习能够在仅有少量提示词样本的情况下实现有效的检测，这对于本次安全敏感的密钥检测任务至关重要。
+    \item \textbf{成本低适应性强：}零样本学习使模型能够快速适应新的密钥构造模式和编码风格，而无需大量的重新训练数据。
+\end{itemize}
+
+\subsubsection{为什么选择Qwen2.5-Coder-7B-Instruct-AWQ模型} 
+
+\begin{itemize}
+    \item \textbf{代码专精能力：}Qwen2.5-Coder是专门针对代码任务优化的大型语言模型，具有强大的代码理解和生成能力，特别适合分析代码中的构造密钥泄露。
+    \item \textbf{更好地执行指令：}Instruct模型是为遵循指令或完成特定任务而设计和优化的模型，能够更好地完成我们按照指定格式输出的指令。
+    \item \textbf{较长上下文支持：}该模型虽然小但支持32768 tokens的上下文，这覆盖了大部分正常代码文件，能够捕捉到跨越多行、多文件的密钥构造逻辑。
+    \item \textbf{本地化部署优势：}AWQ量化技术将模型压缩到4位，大幅减少了内存占用和计算需求，使得在本地环境中高效处理大量代码文件成为可能。实测25万个代码文件（因为代码文件更可能有构造密钥），4*5090显卡未跑满只需要8h左右。
+    \item \textbf{场景适应：}
+    \begin{itemize}
+        \item 效率考量：在需要扫描大量代码文件的场景下，调用api的速度慢且成本较高。我们使用7B参数的AWQ量化模型提供了极佳的性能/资源平衡，可以在有限的硬件资源下快速处理成千上万的文件。
+        \item 隐私安全：本地部署避免了将敏感代码上传到云端的风险，特别适合企业级代码安全审计。
+        \item 定制化能力：该模型可以通过零样本学习快速适应特定项目或组织的代码风格和密钥构造模式。
+    \end{itemize}
+\end{itemize}
+
+\subsection{实现方案}
+
+\subsubsection{文件选择}
+
+构造密钥最可能出现在代码文件中，因此我们只对代码文件进行检测，跳过配置文件、日志文件等非代码文件，从而提高检测效率。我们选用的模型上下文是32768 tokens，换算成英文字符大概100KB($10^5$B)左右，从图中可以看出覆盖了约97\%的文件。
+
+\begin{figure}[H] 
+    \centering
+    \includegraphics[width=0.8\textwidth]{assert/file_size_cumulative_distribution.png}
+    \caption{文件大小（累计）统计结果}
+\end{figure}
+
+\subsubsection{提示工程设计}
+系统采用精心设计的提示模板引导模型识别复杂密钥：
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    minted language=python,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+system_prompt = """
+你是一个构造密钥泄露检测助手，你需要阅读代码并给出部分密钥可能经过拼接、更长间距的上下文和特殊字符完整密钥，
+并以secret_key='value'的格式输出，若没有value可为空。例如：
+## 样例一
+def connect(url, auth):
+    print(f"Connecting to {url} with auth token: {auth}")
+a = "sk-hm6******iob"
+b = "xbhczx"
+c = "bd*******bHwb"
+secret = a + b + c  
+connect("service.example.com", secret)
+答案是secret_key='sk-hm6******iobxbhczxbd*******bHwb'
+
+## 样例二
+data: "secret_key=gna#3*******d&gdF4QaO&imei=000000000000000&version=2.1.54",
+答案是secret_key='gna#3*******d&gdF4QaO'
+"""
+\end{tcblisting}
+
+\subsubsection{文件密钥检测流程}
+
+对于每个待检测文件，复用了KEYSENTINEL的预处理逻辑，从文件中提取出文本，然后将这些文本构造城提示词，输入到Qwen2.5-Coder-7B-Instruct-AWQ模型中进行分析。模型返回的结果被程序捕获并转换成结构化数据。
+
+\subsubsection{多GPU并行处理架构}
+
+通过多GPU并行处理机制，系统具备高效的批量处理能力。
+实测25万个代码文件4*5090显卡只需要8h，且每个显卡的运算能力只使用了不超过50\%，说明同等算力还可以部署更多模型实现更快的速度。
+
+\begin{itemize}
+    \item 支持多个GPU同时工作
+    \item 每个GPU独立处理自己的文件批次
+    \item 实时写入检测结果避免意外终止
+\end{itemize}
+
+\subsection{实验验证}
+
+我们只取一个文件并在content中替换入测试内容：
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    minted language=python,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+    content="""
+    def api_call(endpoint, header):
+        print(666)
+        print(f"Calling {endpoint} with header {header}")​
+        a='284'
+        b='356'
+    api_call("https://api.example.com/data", a+b)
+    """
+\end{tcblisting}
+
+程序运行结果（file是为了适应代码结构引入的，检测内容替换为了content，可忽略）：
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    minted language=python,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+    [
+        {"file": "/root/dino/keyleak/all_files_hash/00000a5a15ce08c6a3c13aa9ef6b2fcb", 
+        "response": "secret_key='284356'", 
+        "detected_keys": ["284356"]}
+    ]
+\end{tcblisting}
+
+以上结果说明LLM成功识别到了密钥并给出了指定格式的结果并被程序成功捕获，这是正则表达式做不到的。我们给出了部分原始检测结果在附录中，原始检测结果的response和程序成功提取出value最能证明LLM对构造密钥的检测的可行性。
+
+\bibliography{ref/refs}   % 参考文献
+
+\appendix
+
+\chapter{解题思路1关键代码}
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    title=潜在密钥提取(关键代码片段)-hit\_git\_tf.py,
+    minted language=python,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+def scan_filelist_tf(rules_single, file_list, single_dict, duplicate_dict, shared_variable, log_path, timeout_seconds):
+
+logger_instance = setup_logger(log_path)
+for file_path in tqdm(file_list):
+
+    file_value_set = set()
+    hit_num = 0
+    hit_dict = []
+    shared_variable.value += 1
+    if (shared_variable.value % 3000) == 0:
+        print("Inside the function:", shared_variable.value)
+    try:
+
+        signal.signal(signal.SIGALRM, handler)
+        signal.alarm(timeout_seconds)
+
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        for rule_info in rules_single:
+            rule_name = rule_info['rule_name']
+            rule_pattern = rule_info['regex']
+            try:
+                rule = re.compile(rule_pattern)
+            except:
+                continue
+
+            for match in rule.finditer(content):
+
+                start, end = match.span(1) if rule.groups == 1 else match.span(0)
+                if rule_info["series"] == 'jdbc' or rule_info['series'] == 'private' or rule_info[
+                    'series'] == 'uri' or rule_info['series'] == 'jwt':
+                    start, end = match.start(), match.end()
+
+                line_start = content.count('\n', 0, start) + 1
+                line_end = content.count('\n', 0, end) + 1
+                col_start = start - content.rfind('\n', 0, start)
+                col_end = end - content.rfind('\n', 0, end)
+
+
+                if rule_info['series'] != "uri":
+                    value = match.group(1) if rule.groups == 1 else match.group(0)
+                else:
+                    # Parsing URLs
+                    parsed_url = urlparse(match.group(0))
+                    # Get username and password
+                    user_info = parsed_url.username, parsed_url.password
+
+                    value = user_info[1]
+                    if value == None:  # The detected URL has no secret———https://localhost:3000/jqueryui@1.2.3
+                        continue
+                prefix = ""
+                if rule_info['series'] == 'generic':
+                    prefix = match.group(1)
+                    value = match.group(2)
+                    if len(value) == 42 and value.startswith("0x"):  # Special case representing address
+                        continue
+                    key_value = get_sub(match.group(), value)
+                    key_value = re.sub(r'[^a-zA-Z]*$', '', key_value)
+                    start = start + len(key_value)
+
+                if rule_info['series'] == 'private':
+                    if len(value) < 128:
+                        continue
+                    if len(value) < 256 and 'ECC' in match.group():
+                        continue
+                    if len(value) < 256 and 'RSA' in match.group():
+                        continue
+                if value is None:
+                    continue
+                if len(value) < 5:
+                    continue
+                # 对于有熵的机械密钥
+                if 'entropy' in rule_info:
+                    if entropy(value) < rule_info['entropy']:
+                        continue
+\end{tcblisting}
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    title=多因素过滤检测-filter\_multireason.py,
+    minted language=python,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+    import os
+    import sys
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
+    from base_func.base_func import read_dict_bin
+    
+    def check_multi_reason(hit_dict):
+        series_have = {}
+        current_path = os.path.dirname(os.path.abspath(__file__))
+        target_path = os.path.abspath(os.path.join(current_path, '../data/regex/regex_multiple_rulename.bin'))
+        regex_multiple_rulename=read_dict_bin(target_path)
+        for tmp in hit_dict:
+            if tmp['series'] in regex_multiple_rulename:    # 只判断多因素
+        
+                if tmp['series'] not in series_have:
+                    series_have[tmp['series']] = {tmp["rule_name"]}  # 将字符串转换为集合
+                else:
+                    series_have[tmp['series']].add(tmp["rule_name"])  # 将字符串作为一个元素添加到集合中
+        check_false=set()
+        
+        for series in series_have:
+            if series_have[series]==regex_multiple_rulename[series]:       #说明类别集齐满了
+                check_false.add(series)  
+        end_result=[]
+        suffixes=["URL", "ID",  "User",  "Domain"] 
+        for tmp in hit_dict:
+            if tmp['series'] not in regex_multiple_rulename:
+                end_result.append(tmp)
+            else:
+                if any(char.isupper() for char in tmp['rule_name']):    #在tf的正则里面判断
+                    if tmp['series'] in check_false and (not any(tmp['rule_name'].endswith(suffix) for suffix in suffixes)):
+                        end_result.append(tmp)
+                else:
+                    end_result.append(tmp)
+        return end_result    
+\end{tcblisting}
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    title=熵值、单词、模式三个过滤器-filter\_pattern\_word.py,
+    minted language=python,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+    import os
+    import sys
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
+    
+    from base_func.base_func import read_json
+    import math
+    from base_func.save_state import *
+    from base_func.logger import setup_logger
+    from tqdm import tqdm
+    import wordninja
+    import re
+    # 计算单词字符串的熵
+    def entropy(string):
+    
+        prob_dict = {}
+        for character in string:
+            if character in prob_dict.keys():
+                prob_dict[character] += 1
+            else:
+                prob_dict[character] = 1
+        probs = [float(prob_dict[character]) / len(string) for character in prob_dict]
+        return - sum([prob * math.log(prob, 2) for prob in probs])
+    
+    def read_dict_bin(path):
+        # 从二进制文件中加载hit_dict
+        with open(path, 'rb') as f:
+            return pickle.load(f)
+    
+    def split_string_entropy(string, length=30):  #用于拆分长的字符串计算熵_对于machine的并且没有private
+        if len(string) < length :
+            if  entropy(string)< 2.4:
+                return True
+            else:
+                return False 
+        step=len(string)//length
+        str_splited=[]
+        for i in range(step):
+            start_idx = i * length
+            end_idx = (i + 1) * length if i < step - 1 else len(string)
+            batch_str = string[start_idx:end_idx]
+            str_splited.append(batch_str)
+        value_entropy=[ entropy(secret_substr)  for secret_substr in str_splited]
+        if any(x < 3 for x in value_entropy):
+            return True
+        else:
+            return False
+    def split_word(secret_match,words_list):
+         
+        tokens = re.split(r'[._\(\)\{\}\-\#\@\$\%\^\&\*]', secret_match)
+        tokens = [token for token in tokens if len(token)>=1]  # 删除空字符串
+        # 进一步拆解
+        new_tokens = []
+        for token in tokens:
+            if token not in words_list and len(token)>3:
+                split_tokens = [split_token for split_token in  wordninja.split(token)if len(split_token)>2]    #wordninja不适合长度短的单词
+                new_tokens.extend(split_tokens)
+            else:
+                new_tokens.append(token)
+        return new_tokens
+    def count_dictionary_words_long_value(secret, words_list,secret_fixed_prefixes):
+        secret['word_weight']=0
+        secret['filter_count']=[]
+        have_meaning=False
+        secret_match=secret['value']
+        
+        more5=0
+        for key in words_list:
+            if len(key)<4:
+                continue
+            if key in secret_fixed_prefixes.lower():  #正则表达式本身可能就会出现单词
+                continue
+            if key in secret_match:  # 将关键词也转换为小写形式进行比较
+                count = secret_match.count(key) 
+                for i in range(count):
+                    secret['filter_count'].append(key)
+                    secret['word_weight']+=len(key)
+                if len(key)>=6:                   #直接由长度大于6的单词
+                    have_meaning= True
+                    return secret,have_meaning        
+                if (secret['word_weight']/len(secret_match))>=0.25:  
+                    have_meaning= True
+                    return secret,have_meaning
+        return secret,have_meaning
+    def count_dictionary_words(secret, words_list,secret_fixed_prefixes):
+        secret['word_weight']=0
+        secret['filter_count']=[]
+        have_meaning=False
+        secret_match=secret['value']
+        words=split_word(secret_match,words_list)
+    
+        more4=0
+        value_list=[]
+        for word in words:
+            # if len(word)>2 and len(word)<5:
+            #     value_list.append(word)
+            # else:
+            value_list.append(word.lower())
+        for key in words_list:
+            if key in secret_fixed_prefixes.lower():  #正则表达式本身可能就会出现单词
+                continue
+            if key in value_list:  # 将关键词也转换为小写形式进行比较
+                count = value_list.count(key) 
+                for i in range(count):
+                    secret['filter_count'].append(key)
+                    secret['word_weight']+=len(key)
+                if len(key)>4:
+                    more4+=1
+                if  len(secret_match)<=30:
+                    if more4>0 :
+                        have_meaning= True
+                        return secret,have_meaning
+                elif len(secret_match)>30 and len(secret_match)<=60:
+                    if more4>1 :
+                        have_meaning= True
+                        return secret,have_meaning          
+            if (secret['word_weight']/len(secret_match))>0.35:  
+                have_meaning= True
+                return secret,have_meaning
+        return secret,have_meaning
+    def filter_pattern_word_single(single_hit,words_list,patterns, rules_single,log_path):
+        logger_instance = setup_logger(log_path)
+        secret=single_hit
+        if secret['is_mechanical']=="human":
+            return secret
+       
+        if secret['series']!='private' and split_string_entropy(secret['value']):
+            return False
+    
+        #print(secret)
+        rule_name = secret['rule_name']
+        secret_match = secret['value']
+        secret['word_weight']=0
+        secret['filter_count']=[]
+        secret_fixed_prefixes=''
+        for tmp in rules_single:
+            if rule_name == tmp['rule_name'] :   #特殊处理general
+                if rule_name !='generic-api-key':
+                    secret_fixed_prefixes=tmp["regex"]     #正则表达式本身可能就会出现单词
+    
+        # ——————————pattrn过滤—————————
+        pattern_count=[]   #对每个类别的word_可以计数————>可以统计一下私钥之类的word情况,先弄2个的情况
+    
+        for pattern in patterns:            #这里就不需要过滤word了它是pattern
+            if pattern.lower() in secret_fixed_prefixes.lower(): #排除前后缀
+                continue
+            if pattern in secret_match:  #pattern就不要lower了
+                pattern_count.append(pattern)
+            if(len(pattern_count)>0):
+                secret['filter_count'].extend(pattern_count)
+                return False
+        #加特殊情况————    "api': 6.5.9_biqbaboplfbrettd7655fr4n2y\n"
+        pattern_nums = r'^\d+\.\d+\.\d+'
+        # 检查字符串是否匹配模式
+        match = re.match(pattern_nums, secret['value'])
+        if match:
+            return False
+        secret['filter_count'].extend(pattern_count)    
+        # ——————————单词过滤——————————
+        # 不能将匹配的单词打印出来if any(word.lower() in secret.lower() for word in words_list):   #不区分大小写
+        """if len(secret['value'])>60:
+            secret,have_meaning=count_dictionary_words_long_value(secret,words_list,secret_fixed_prefixes)
+        else:  """    
+        secret,have_meaning=count_dictionary_words(secret,words_list,secret_fixed_prefixes)
+        if have_meaning:         #单词长度占比大于密钥的百分之三十了
+            return False
+    
+        
+        
+        return secret
+    
+    def filter_pattern_word(hit_dict,words_list,patterns,rules_single,log_path):
+        filtered_meaning=[]
+        for tmp in tqdm(hit_dict):
+            if  filter_pattern_word_single(tmp,words_list,patterns,rules_single,log_path):
+                filtered_meaning.append(tmp)
+        return filtered_meaning
+
+\end{tcblisting}
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    title=键值过滤器-key\_value\_Filter.py,
+    minted language=python,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+    import sys
+    sys.path.append('../') # 将上一级目录添加到系统路径中
+    # import time
+    #
+    from base_func.base_func import *
+    # import multiprocessing
+    from multiprocessing import Pool, Manager
+    from tqdm import tqdm
+    import re
+    import wordninja
+    
+    def count_matching_words(input_string, filter_key):
+        count = 0
+        input_string_lower = input_string.lower()  # 将输入字符串转换为小写形式
+    
+        for key in filter_key:
+            if key.lower() in input_string_lower:  # 将关键词也转换为小写形式进行比较
+                count += 1
+        return count
+    
+    def filter_prefix(key_list,left_splited_list,right_splited_list,confusion_list,list_left,list_right,prefix): #前缀拆词，前缀左拆、前缀右拆，混淆、左右白名单
+        #————————key混淆————————
+        key_list_lower=[tmp.lower() for tmp in key_list]
+        confusion_list=[tmp.lower() for tmp in confusion_list]
+        for tmp in confusion_list:
+            if tmp in key_list_lower and prefix.lower() in tmp:      #后面的and是需要确认哪个prefix命中的这个只能用于混淆
+                return True
+        #————————key左边过滤————————
+        list_left_lower=[tmp.lower() for tmp in list_left]
+        left_splited_list_lower=[tmp.lower() for tmp in left_splited_list]
+        for tmp in list_left_lower:
+            if tmp in left_splited_list_lower :      #左边
+                return True
+        #————————key右边过滤————————
+        list_right_lower=[tmp.lower() for tmp in list_right]
+        right_splited_list_lower=[tmp.lower() for tmp in right_splited_list]
+        for tmp in list_right_lower:
+            if tmp in right_splited_list_lower :      #右边
+                return True
+        return False
+    def split_words(secret_match,word_list):
+         
+        tokens = re.split(r'[._-]', secret_match)
+        tokens = [token.rstrip() for token in tokens if len(token)>=2]  # 删除空字符串
+        # 进一步拆解
+        new_tokens = []
+        for token in tokens:
+            if token not in word_list and len(token)>3:
+                split_tokens = [split_token for split_token in  wordninja.split(token)if len(split_token)>=2]
+                new_tokens.extend(split_tokens)
+            else:
+                new_tokens.append(token)
+        return new_tokens
+    def split_string_by_word(s, word):
+        if not word:  # Check if the word is empty
+            return s, '', ''  # Return the input string and empty strings
+        if word in s:
+            parts = s.split(word)
+            left_part = parts[0]
+            right_part = word.join(parts[1:])
+            return left_part, word, right_part
+        else:
+            return s, '', ''
+    
+    def get_sub(a,b):
+        # 查找b在a中的起始位置  
+        start_index = a.find(b)  
+        # 如果b是a的子串  
+        if start_index != -1:  
+            # 提取b之前的那部分字符串  
+            return a[:start_index]  
+        else:  
+            # 如果b不是a的子串，可以设置一个默认值或抛出异常  
+            return a
+    
+    def key_value_filter_single(single_hit):
+        current_path = os.path.dirname(os.path.abspath(__file__))
+        target_path = os.path.abspath(os.path.join(current_path, '../data/fixed_top_english_words_mixed_500000.json'))
+        word_list=read_json(target_path)
+        end_filtered=[]
+        whole_value_list=["templateid:", "@tmp", "@example",'example',"@test", "@hostname",'test:test','example.com','@somewhere','_key','@url','hello:world@',"****@localhost", "127.0.0.1:443@"]
+        value_placeholder=["changeit", "changeme", "change", "guest", "printf", "return", "test", "user",'pass',"password", "username", "secret",'test','bar','foobar','api_secret','TOKEN','pwd','password','apikey',"Parola", "Parolan", "Wachtwoord", "Salasana", "Pasahitza", "boolean", "Lozinka", "before", "blahblah"]
+        value_machine=["ca-pub-"]  #机械密钥的
+        test_path=["test", "example",'demo']
+        list_right=["Oid", "author", "hash",'Fingerprint','keyword','checksum','addr','type','id']
+        target_path = os.path.abspath(os.path.join(current_path, '../data/sorted_end_right_list_fasle_more20.json'))
+        sorted_end_right_list_fasle_more20=read_json(target_path)
+        list_right.extend([key for key,value in sorted_end_right_list_fasle_more20.items()])
+        list_left=['PublicKey','public',"fake",'input','put','enter',"invalid"]
+        target_path = os.path.abspath(os.path.join(current_path, '../data/end_confuse_words.txt'))
+        confusion_list=load_txt(target_path)
+        whole_key_list=["formkey", "?key", " h1", "GPG key", "SAPageKey", "pubkey", "key_hex", "fake_",'Password_label','Password_action','Password_msg',"git-tree", "_id", " id",'sha256','-sha','sha1',' h1','keyword','apiUsername','PublicKey','public','.js','.py','.yaml','_type','_addr','.txt'] 
+        target_path = os.path.abspath(os.path.join(current_path, '../data/file_extension.txt'))
+        file_extention=load_txt(target_path)
+        # 从文件读取无效上下文列表
+        target_path = os.path.abspath(os.path.join(current_path, '../data/invalid_pre.txt'))
+        try:
+            invalid_contexts = load_txt(target_path)
+            #invalid_pre = [prefix.lower() for prefix in invalid_pre]  # 转换为小写以便比较
+        except:
+            # 如果文件不存在，使用默认列表
+            invalid_contexts = ["invalid"]
+        
+        
+        tmp=single_hit
+        flag=False
+    
+        #if tmp['series']=='generic'or  tmp['match']!=tmp['value']:       #只有当key有别的语义时
+        if tmp['need_keyvalue']== True and tmp['match']!=tmp['value']:                                        #暂时只对通用密钥有效
+            key_value=get_sub(tmp['match'],tmp['value'])
+            key_value = re.sub(r'[^a-zA-Z]*$', '', key_value)   #去除非字母数字字符
+            if any(key_value.endswith(ext) for ext in file_extention):
+                print(f"filter:{tmp['match']}")
+                return False
+            pre_left, target, pre_right = split_string_by_word(key_value, tmp['prefix'])
+            # 添加上下文过滤逻辑
+            for invalid_context in invalid_contexts:
+                if invalid_context in key_value.lower():
+                    print(f"filter: invalid pre '{key_value}' in {tmp['match']}")
+                    return False
+            key_list=split_words(key_value,word_list)
+            left_splited_list=split_words(pre_left,word_list)
+            right_splited_list=split_words(pre_right,word_list)
+            if  filter_prefix(key_list,left_splited_list,right_splited_list,confusion_list,list_left,list_right,tmp['prefix']) or count_matching_words(key_value,whole_key_list) or count_matching_words(tmp['value'],value_machine):
+                print(f"filter:{tmp['match']}")
+                return False
+        elif  tmp['match']!=tmp['value']:            #除了generic的他们可能没有prefix，但是可能也有前缀
+            if 'password' in tmp['rule_name'] or'Jdbc'in tmp['rule_name'] or 'Uri'in tmp['rule_name']or 'jwt'in tmp['rule_name']:  
+                pass
+            else:
+                key_value=get_sub(tmp['match'],tmp['value'])
+                key_value = re.sub(r'[^a-zA-Z]*$', '', key_value)  
+                if any(key_value.endswith(ext) for ext in file_extention):
+                    print(f"filter:{tmp['match']}")
+                    return False
+        if tmp['is_mechanical'] =='human': 
+            if 'password' in tmp['rule_name'] or'Jdbc'in tmp['rule_name'] or 'Uri'in tmp['rule_name']:                #password
+                count_match=count_matching_words(tmp['value'],value_placeholder)
+                count_match+=count_matching_words(tmp['match'],whole_value_list)
+                #count_match+=count_matching_words(tmp['file'],test_path)
+                if count_match>=1:
+                    print(f"filter:{tmp['value']}")
+                    return False
+
+                split_value = re.split(r'\W+',tmp['value'])    #拆分单词，过滤常见密钥
+                result_value = [s for s in split_value if len(s) >= 3]  
+                if flag:
+                    return False   
+
+            else:                                 #其它链接数据库的密钥
+                count_match=count_matching_words(tmp['value'],value_placeholder)
+                count_match+=count_matching_words(tmp['match'],whole_value_list)
+                #count_match+=count_matching_words(tmp['file'],test_path)
+                if count_match>=2:
+                    print(f"filter:{tmp['value']}")
+                    return False
+            
+        return True
+    
+    
+    def multiprocess(batch,share_dict):
+        for tmp in tqdm(batch):
+            if key_value_filter_single(tmp):
+                share_dict.append(tmp)
+
+\end{tcblisting}
+
+
+\chapter{解题思路2关键代码}
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    title=使用LLM检测复杂密钥-llmdetect.py,
+    minted language=python,
+    minted options={fontsize=\zihao{5},breaklines, autogobble,linenos,numbersep=2mm}}
+import os
+import sys
+import json
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from base_func.base_func import get_files
+import multiprocessing
+from multiprocessing import Pool
+import argparse
+from tqdm import tqdm
+from joblib import Parallel, delayed
+
+# 初始化模型
+def init_model(device_id=0):
+    model_name = "Qwen/Qwen2.5-Coder-7B-Instruct-AWQ"
+    
+    # 指定特定的CUDA设备
+    device_map = {"": f"cuda:{device_id}"}
+    
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=torch.float16,
+            device_map=device_map
+        )
+    except Exception as e:
+        print(f"使用device_map加载模型时出错: {e}")
+        print("尝试使用传统方式加载模型...")
+        # 如果device_map方式失败，使用传统方式加载
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=torch.float16,
+            low_cpu_mem_usage=True
+        )
+        model = model.to(f"cuda:{device_id}")
+    
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    return model, tokenizer
+
+# 检测单个文件中的复杂密钥
+def detect_complex_keys_in_file(file_path, model, tokenizer, output_file=None):
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except Exception as e:
+        try:
+            with open(file_path, 'r', encoding='latin-1') as f:
+                content = f.read()
+        except Exception as e:
+            with open(file_path, 'rb') as f:
+                content = f.read().decode('utf-8', errors='ignore')
+    
+    # 如果文件太大，只取部分内容
+    max_content_length = 100000 #131,072个上下文token约100k代码
+#     content="""def api_call(endpoint, header):
+#     ......
+#     print(f"Calling {endpoint} with header {header}")​
+    
+# api_call("https://api.example.com/data", "sec*******ret")"""
+    content = content[:max_content_length]
+
+    system_prompt = """
+    你是一个构造密钥泄露检测助手，你需要阅读代码并给出部分密钥可能经过拼接、更长间距的上下文和特殊字符完整密钥，并以secret_key='value'的格式输出，若没有value可为空。例如：
+    ## 样例一
+    def connect(url, auth):
+        print(f"Connecting to {url} with auth token: {auth}")​
+    a = "sk-hm6******iob"
+    b = "xbhczx"
+    c = "bd*******bHwb"
+    secret = a + b + c  
+    connect("service.example.com", secret)
+    答案是secret_key='sk-hm6******iobxbhczxbd*******bHwb'
+
+    ## 样例二
+    data: "secret_key=gna#3*******d&gdF4QaO&imei=000000000000000&version=2.1.54",
+    答案是secret_key='gna#3*******d&gdF4QaO'
+    """
+    prompt=f"""
+    请检测：
+    {content}
+    需要你根据理解告诉我密钥是多少，不要编写代码，按secret_key='value'的格式输出，若找不到value可为空。
+    """
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt}
+    ]
+    
+    text = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True
+    )
+    
+    model_inputs = tokenizer([text], return_tensors="pt",truncation=True).to(model.device)
+    
+    generated_ids = model.generate(
+        **model_inputs,
+        max_new_tokens=512
+    )
+    
+    generated_ids = [
+        output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
+    ]
+    
+    response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+    #print(content[:200],'>>>',response)
+    # 解析响应中的密钥
+    if "secret_key=" in response:
+        result = {
+            "file": file_path,
+            "response": response,
+            "detected_keys": extract_keys_from_response(response)
+        }
+        
+        # 实时写入结果到文件
+        if output_file and len(result["detected_keys"]) > 0:
+            with open(output_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(result, ensure_ascii=False) + ',\n')
+        
+        return result
+    
+    return None
+
+# 从LLM响应中提取密钥
+def extract_keys_from_response(response):
+    keys = []
+    lines = response.split('\n')
+    for line in lines:
+        if "secret_key=" in line:
+            # 提取密钥值
+            try:
+                key_part = line.split("secret_key=", 1)[1]
+                if "'" in key_part:
+                    key_value = key_part.split("'", 1)[1].split("'", 1)[0]
+                elif '"' in key_part:
+                    key_value = key_part.split('"', 1)[1].split('"', 1)[0]
+                else:
+                    key_value = key_part.strip()
+                if key_value and key_value != "''" and key_value != '""':
+                    keys.append(key_value)
+            except:
+                pass
+    return keys
+
+# 从src_filenames.txt读取文件列表
+def get_source_files_from_txt(txt_path, base_path="/root/dino/keyleak/all_files_hash"):
+    """
+    从src_filenames.txt读取文件名并构造成完整路径
+    """
+    try:
+        with open(txt_path, 'r', encoding='utf-8') as f:
+            filenames = [line.strip() for line in f.readlines() if line.strip()]
+        
+        # 构造完整路径
+        full_paths = [os.path.join(base_path, filename) for filename in filenames]
+        
+        # 过滤掉不存在的文件
+        existing_files = [path for path in full_paths if os.path.exists(path)]
+        
+        print(f"从 {txt_path} 读取到 {len(filenames)} 个文件名")
+        print(f"其中 {len(existing_files)} 个文件在 {base_path} 中存在")
+        
+        return existing_files
+    except Exception as e:
+        print(f"读取文件列表时出错: {e}")
+        return []
+
+# 处理文件批次
+def process_file_batch(file_batch, device_id, output_file_prefix):
+    """
+    在指定的设备上处理一批文件，每个设备写入独立的文件
+    """
+    # 为每个GPU创建独立的输出文件
+    output_file = f"{output_file_prefix}_gpu_{device_id}.json"
+    
+    # 初始化文件
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write('[\n')
+    
+    results = []
+    # 为每个批次初始化一次模型
+    model, tokenizer = init_model(device_id)
+    
+    # 使用tqdm显示进度条
+    for file_path in tqdm(file_batch, desc=f"GPU {device_id} 处理进度", leave=False):
+        try:
+            result = detect_complex_keys_in_file(file_path, model, tokenizer, output_file)
+            if result and len(result["detected_keys"]) > 0:
+                results.append(result)
+        except Exception as e:
+            print(f"处理文件 {file_path} 时出错: {e}")
+    
+    # 完成后关闭JSON数组
+    with open(output_file, 'a', encoding='utf-8') as f:
+        f.write('\n]')
+    
+    # 清理模型以释放内存
+    del model
+    del tokenizer
+    torch.cuda.empty_cache()
+    
+    return results
+
+# 将列表划分为n份
+def split_list(lst, n):
+    """
+    将列表划分为n个子列表
+    """
+    k, m = divmod(len(lst), n)
+    return [lst[i*k + min(i, m):(i+1)*k + min(i+1, m)] for i in range(n)]
+
+# 多GPU并行处理函数
+def process_files_with_multiple_gpus(file_list, num_gpus=4, output_file=None):
+    """
+    使用多个GPU并行处理文件
+    """
+    # 将文件列表划分为num_gpus个子列表
+    file_batches = split_list(file_list, num_gpus)
+    
+    # 使用joblib并行处理，但确保每个进程独立加载模型
+    results = Parallel(n_jobs=num_gpus, backend="loky")(
+        delayed(process_file_batch)(file_batch, i, output_file) 
+        for i, file_batch in enumerate(file_batches)
+    )
+    
+    # 展平结果列表
+    flattened_results = []
+    for batch_result in results:
+        flattened_results.extend(batch_result)
+    
+    return flattened_results
+
+# 主函数
+def main():
+    parser = argparse.ArgumentParser(description='使用LLM检测复杂密钥')
+    parser.add_argument('--path', dest='path', type=str, help='要检测的文件根路径', default="/root/dino/keyleak/all_files_hash")
+    parser.add_argument('--size_limit', dest='size_limit', type=int, help='文件大小限制', default=100 * 1024* 1024)
+    parser.add_argument('--output', dest='output', type=str, help='输出文件路径', default="./complex_keys_results.json")
+    parser.add_argument('--num_gpus', dest='num_gpus', type=int, help='使用的GPU数量', default=4)
+    
+    args = parser.parse_args()
+    
+    print(f"正在扫描路径: {args.path}")
+    print(f"使用GPU数量: {args.num_gpus}")
+    
+    # 从src_filenames.txt读取文件列表
+    txt_file_path = "/root/dino/keyleak/src_filenames.txt"
+    if os.path.exists(txt_file_path):
+        file_list = get_source_files_from_txt(txt_file_path, args.path)
+        print(f"从src_filenames.txt读取到 {len(file_list)} 个文件")
+    else:
+        print(f"未找到 {txt_file_path}，使用默认文件列表")
+        file_list = get_files(args.path, args.size_limit)
+    
+    print(f"实际处理文件数: {len(file_list)}")
+    
+    # 初始化输出文件，创建JSON数组开始
+    with open(args.output, 'w', encoding='utf-8') as f:
+        f.write('[\n')
+    
+    # 使用多个GPU并行处理文件
+    print("正在使用多GPU并行处理文件...")
+    results = process_files_with_multiple_gpus(file_list, args.num_gpus, args.output)
+    
+    
+    print(f"检测完成，找到 {len(results)} 个可能包含复杂密钥的文件")
+    print(f"结果已保存到: {args.output}")
+
+if __name__ == '__main__':
+    main()
+\end{tcblisting}
+
+
+\begin{tcblisting}{listing engine=minted,boxrule=0.2mm,
+    colback=blue!5!white,colframe=blue!75!black,
+    breakable,listing only,left=5mm,
+    title=LLM检测部分原始结果,
+    minted language=json,
+    minted options={fontsize=\zihao{-5},breaklines, autogobble,linenos,numbersep=2mm}}
+    [
+        {"file": "/root/dino/keyleak/all_files_hash/401f1475d02ccb35d216c0e226d6fd1c", "response": "secret_key='3qXo`u>\n3Ë1B)­'", "detected_keys": ["3qXo`u>"]},
+        {"file": "/root/dino/keyleak/all_files_hash/403f0383412139230632ac8662400966", "response": "secret_key='zbLsuDDL4CS2U0M4KezOZZbGUY9iWtVf'", "detected_keys": ["zbLsuDDL4CS2U0M4KezOZZbGUY9iWtVf"]},
+        {"file": "/root/dino/keyleak/all_files_hash/405103674df7b7e0e60f8a60cea6cd21", "response": "```plaintext\nsecret_key='sk-12345'\n```", "detected_keys": ["sk-12345"]},
+        {"file": "/root/dino/keyleak/all_files_hash/413f92bf719b14b74c80cd20b429d079", "response": "secret_key='secret'", "detected_keys": ["secret"]},
+        {"file": "/root/dino/keyleak/all_files_hash/41c379ae899736528cba437426c0146f", "response": "secret_key='cEvcwMJFX4OwbsYVaMt2Os6GxxGgDUlBGILs2RySgoeoNJKE61ygbz1vhaCVynGERaRrlviPB...'", "detected_keys": ["cEvcwMJFX4OwbsYVaMt2Os6GxxGgDUlBGILs2RySgoeoNJKE61ygbz1vhaCVynGERaRrlviPB..."]},
+        {"file": "/root/dino/keyleak/all_files_hash/41d797089874bc076d485b082125b9b4", "response": "```plaintext\nsecret_key='devkey, should be in a file'\n```", "detected_keys": ["devkey, should be in a file"]},
+        {"file": "/root/dino/keyleak/all_files_hash/41fe027952382be8e50b37f7bb406fc0", "response": "secret_key='1234567890:AAAABBBBCCCCDDDDeeeeFFFFgggGHHHH'", "detected_keys": ["1234567890:AAAABBBBCCCCDDDDeeeeFFFFgggGHHHH"]},
+        {"file": "/root/dino/keyleak/all_files_hash/4265795394c4c84ab33f94dbbe2384a5", "response": "```plaintext\nsecret_key='TEST_AWS_ACCESS_KEY_ID'\nsecret_key='TEST_AWS_SECRET_ACCESS_KEY'\n```", "detected_keys": ["TEST_AWS_ACCESS_KEY_ID", "TEST_AWS_SECRET_ACCESS_KEY"]},
+        {"file": "/root/dino/keyleak/all_files_hash/42f7992f8347ad853370a6d5ba03a55e", "response": "secret_key='Bearer 6c6adc18-22a9-929f-648d-786eb20ebcf4'", "detected_keys": ["Bearer 6c6adc18-22a9-929f-648d-786eb20ebcf4"]},
+        {"file": "/root/dino/keyleak/all_files_hash/4306851994e0f2aef1148e441b1a8e06", "response": "secret_key='optional_api_key'", "detected_keys": ["optional_api_key"]},
+        {"file": "/root/dino/keyleak/all_files_hash/4383b599581de437407e7a59bc52c98f", "response": "secret_key='TWILIO_ACCOUNT_SID=your_account_sid&TWILIO_AUTH_TOKEN=your_auth_token'", "detected_keys": ["TWILIO_ACCOUNT_SID=your_account_sid&TWILIO_AUTH_TOKEN=your_auth_token"]},
+        {"file": "/root/dino/keyleak/all_files_hash/43abb93487d59b57cef6501225486832", "response": "secret_key='abc'", "detected_keys": ["abc"]},
+        {"file": "/root/dino/keyleak/all_files_hash/442198909b99dd7852b0ee0ef1b0de30", "response": "secret_key='ANTHROPIC_API_KEY'", "detected_keys": ["ANTHROPIC_API_KEY"]},
+        {"file": "/root/dino/keyleak/all_files_hash/447536c01954b19ca00e405acc5a0e55", "response": "secret_key='K2T6k1eRNwH3kwNqiXk5I1aSelzqBTdN0-4K0XhsAZ0='", "detected_keys": ["K2T6k1eRNwH3kwNqiXk5I1aSelzqBTdN0-4K0XhsAZ0="]},
+        {"file": "/root/dino/keyleak/all_files_hash/44c377c2741b19ea9ad204b8d363d244", "response": "secret_key='92db86.........'", "detected_keys": ["92db86........."]},
+        {"file": "/root/dino/keyleak/all_files_hash/44df6ca85a9ce095d4e4d34ed11d00cd", "response": "secret_key='azffw7zSQU6KJq4DrWrwhw'", "detected_keys": ["azffw7zSQU6KJq4DrWrwhw"]},
+        {"file": "/root/dino/keyleak/all_files_hash/44f03bbcc1f1a8ac9fb1a6af25ea66b8", "response": "secret_key='fake-super-secret-token'", "detected_keys": ["fake-super-secret-token"]},
+        {"file": "/root/dino/keyleak/all_files_hash/458a0cf26a6962cfe8e8a721bff0d848", "response": "secret_key='phc_oENDjGgHtmIDrV6puUiFem2RB4JA8gGWulfdulmMdZP'", "detected_keys": ["phc_oENDjGgHtmIDrV6puUiFem2RB4JA8gGWulfdulmMdZP"]},
+        {"file": "/root/dino/keyleak/all_files_hash/45a4d1a0423421eab8c5a4c104f85213", "response": "secret_key='E6wRbVhD0IBeCiGJ'", "detected_keys": ["E6wRbVhD0IBeCiGJ"]},
+        {"file": "/root/dino/keyleak/all_files_hash/45d340767418e3edadda558e42f8a8c3", "response": "```python\nsecret_key='cNo1Fekr1kVEWcAw4P2Gg6MXWsRBtYy5W8idzMoJifCgkpPfLMfj'\n```", "detected_keys": ["cNo1Fekr1kVEWcAw4P2Gg6MXWsRBtYy5W8idzMoJifCgkpPfLMfj"]},
+        {"file": "/root/dino/keyleak/all_files_hash/4608957577dc59fbe3b86aacb8f6ce20", "response": "secret_key='yasserf:your_bintray_api_key_here'", "detected_keys": ["yasserf:your_bintray_api_key_here"]},
+        {"file": "/root/dino/keyleak/all_files_hash/46734730c6ad06a943fb7121d54ebdfe", "response": "secret_key='0lhozfib5410mp'", "detected_keys": ["0lhozfib5410mp"]},
+        {"file": "/root/dino/keyleak/all_files_hash/48a7cf52f561a939de1363a1bb48595f", "response": "secret_key='KwnbpKJNe6gOjC2X5ilxafFvxbNppiIfGejB2hlY'", "detected_keys": ["KwnbpKJNe6gOjC2X5ilxafFvxbNppiIfGejB2hlY"]},
+        {"file": "/root/dino/keyleak/all_files_hash/48e73717b47fba305124d2e60940efc2", "response": "```plaintext\nsecret_key='secret0key000000'\n```", "detected_keys": ["secret0key000000"]},
+        {"file": "/root/dino/keyleak/all_files_hash/49059c3b73176d45a6633768084721d7", "response": "secret_key='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9. eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhocXBwY3FsdGtsemZwZ2dkb2NiIiwicm9sZSI6ImFub24iL...'", "detected_keys": ["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9. eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhocXBwY3FsdGtsemZwZ2dkb2NiIiwicm9sZSI6ImFub24iL..."]},
+        {"file": "/root/dino/keyleak/all_files_hash/49409bc5f5c875360ecbb8b82bfe29eb", "response": "secret_key='AdmSbl8'", "detected_keys": ["AdmSbl8"]},
+        {"file": "/root/dino/keyleak/all_files_hash/495065977bcb8b252161bc07ef9672c2", "response": "secret_key='MicroPyth0nRules'", "detected_keys": ["MicroPyth0nRules"]},
+        {"file": "/root/dino/keyleak/all_files_hash/49661bea739ec82b6add5d44a914c386", "response": "secret_key='NDE0MzIyMDQ1MzA0OTYzMDcy.DWl2qw.nTxSDf9wIcf42te4uSCMuk2VDa0'", "detected_keys": ["NDE0MzIyMDQ1MzA0OTYzMDcy.DWl2qw.nTxSDf9wIcf42te4uSCMuk2VDa0"]},
+        {"file": "/root/dino/keyleak/all_files_hash/497354f448cc7c85289cab169b525f94", "response": "secret_key='this is my secret key'", "detected_keys": ["this is my secret key"]},
+        {"file": "/root/dino/keyleak/all_files_hash/4995efa29190cd6745032fa70594c208", "response": "secret_key='prosieben'", "detected_keys": ["prosieben"]},
+        {"file": "/root/dino/keyleak/all_files_hash/49cb17549b1eed7bd89732461042669c", "response": "secret_key='This is my little secret ^_^'", "detected_keys": ["This is my little secret ^_^"]},
+        {"file": "/root/dino/keyleak/all_files_hash/49d73f3f23e553e8796febf5aca29fa2", "response": "secret_key='wzNMApO6LpLdqSSS45Q~TjKeA'", "detected_keys": ["wzNMApO6LpLdqSSS45Q~TjKeA"]},
+        {"file": "/root/dino/keyleak/all_files_hash/4a0512787c49e6af98b0b4a6eb03a2d4", "response": "secret_key='Bearer 6c6adc18-22a9-929f-648d-786eb20ebcf4'", "detected_keys": ["Bearer 6c6adc18-22a9-929f-648d-786eb20ebcf4"]},
+        {"file": "/root/dino/keyleak/all_files_hash/4bee821a3e45938daf27087df141f6c5", "response": "secret_key='6LeWLCYeAAAAAL1caYzkrIY-M59Vu41vIblXQZ48'", "detected_keys": ["6LeWLCYeAAAAAL1caYzkrIY-M59Vu41vIblXQZ48"]},
+        {"file": "/root/dino/keyleak/all_files_hash/4c57e854351a969664dde3e99b480563", "response": "secret_key='09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7'", "detected_keys": ["09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"]},
+        {"file": "/root/dino/keyleak/all_files_hash/4c6d1849771d851cb8082076852815ae", "response": "secret_key='YOUR_API_KEY'", "detected_keys": ["YOUR_API_KEY"]},
+        {"file": "/root/dino/keyleak/all_files_hash/4c703257410b4ffbb77630d3c62f145e", "response": "secret_key='smtp_login=your_smtp_login&smtp_password=your_smtp_password'", "detected_keys": ["smtp_login=your_smtp_login&smtp_password=your_smtp_password"]},
+        {"file": "/root/dino/keyleak/all_files_hash/4da0c864729b6f7939fdcc62a0edf288", "response": "secret_key='1234'", "detected_keys": ["1234"]},
+        {"file": "/root/dino/keyleak/all_files_hash/4e8f369dfee8101cdbc8364a75659a64", "response": "secret_key='PUVKp9WgGUb3-JUw6EqafLx8tFVP6VKZTWbUOR-HOm__g4fNDt1bCsm_LgYf_k9H'", "detected_keys": ["PUVKp9WgGUb3-JUw6EqafLx8tFVP6VKZTWbUOR-HOm__g4fNDt1bCsm_LgYf_k9H"]},
+        {"file": "/root/dino/keyleak/all_files_hash/50557d10cd4bb6955ab2092634a94552", "response": "secret_key='my-minio-key:OSMM+vkKUTCvQs9YL/CVMIMt43HFhkUpqJxTmGl6rYw=='", "detected_keys": ["my-minio-key:OSMM+vkKUTCvQs9YL/CVMIMt43HFhkUpqJxTmGl6rYw=="]},
+        {"file": "/root/dino/keyleak/all_files_hash/508dacb228ffb81a85d044ebdddb46c0", "response": "secret_key='FakeExamplePassword'", "detected_keys": ["FakeExamplePassword"]},
+        {"file": "/root/dino/keyleak/all_files_hash/50a881fe7d177a743e739d22a2c2e95a", "response": "secret_key='Bearer 6c6adc18-22a9-929f-648d-786eb20ebcf4'", "detected_keys": ["Bearer 6c6adc18-22a9-929f-648d-786eb20ebcf4"]},
+        {"file": "/root/dino/keyleak/all_files_hash/50cba45c1ec4038fa5e196ee8512f7cf", "response": "```plaintext\nsecret_key='DJANGO_WEROBOT_TOKEN'\n```", "detected_keys": ["DJANGO_WEROBOT_TOKEN"]},
+        {"file": "/root/dino/keyleak/all_files_hash/50d288d2e6c766a04927160e60573ef6", "response": "secret_key='yh+^&ZA^$Xh+%FxUv%NucZ(N+POPN%'", "detected_keys": ["yh+^&ZA^$Xh+%FxUv%NucZ(N+POPN%"]},
+        {"file": "/root/dino/keyleak/all_files_hash/513f7a51bf645064d4024966cc65a266", "response": "secret_key='eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9. eyJDbGllbnRfSUQiOiIxIiwiQWNjZXNzIjoiZUZudmdBT0NvZjB5em1zUXZ4WjcifQ. 9J6_xKNG-6L_RnJS7Woq20BZRZpUboBMQknSX7E0YJE'", "detected_keys": ["eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9. eyJDbGllbnRfSUQiOiIxIiwiQWNjZXNzIjoiZUZudmdBT0NvZjB5em1zUXZ4WjcifQ. 9J6_xKNG-6L_RnJS7Woq20BZRZpUboBMQknSX7E0YJE"]},
+        {"file": "/root/dino/keyleak/all_files_hash/5154311c42c5265e3fe1d3b210a6556b", "response": "secret_key='coneofsilence'", "detected_keys": ["coneofsilence"]},
+        {"file": "/root/dino/keyleak/all_files_hash/520899916818546f76aa90e5cde9736b", "response": "secret_key='X@IAIgafLvMSnSnBx)()UiRb&)(.GglNDzqHVLzUgggMZhX^IK'", "detected_keys": ["X@IAIgafLvMSnSnBx)()UiRb&)(.GglNDzqHVLzUgggMZhX^IK"]},
+        {"file": "/root/dino/keyleak/all_files_hash/532411b7fadaa33c7267556581f2e0ae", "response": "secret_key=fuiKNFp9vQFvjLNvx4sUwti4Yb5yGutBN4Xh10LXZhhRKjWlV4", "detected_keys": ["fuiKNFp9vQFvjLNvx4sUwti4Yb5yGutBN4Xh10LXZhhRKjWlV4"]},
+        {"file": "/root/dino/keyleak/all_files_hash/53c147b5d65d59f789c8d530b10cb5ad", "response": "secret_key='ABCSECRETKEY'", "detected_keys": ["ABCSECRETKEY"]},
+        {"file": "/root/dino/keyleak/all_files_hash/53dc66ef6b2b8db8c69ca538a77a5622", "response": "secret_key='ODIN_KEY_ID=your_value_here ODIN_SECRET_KEY=your_value_here'", "detected_keys": ["ODIN_KEY_ID=your_value_here ODIN_SECRET_KEY=your_value_here"]},
+        {"file": "/root/dino/keyleak/all_files_hash/5431200468659dd07a61d0f91470f237", "response": "```plaintext\nsecret_key='367e9b21fef313f187026320016962b47b74ca4ada7d64d551c43c51e195d7a5'\n```", "detected_keys": ["367e9b21fef313f187026320016962b47b74ca4ada7d64d551c43c51e195d7a5"]},
+        {"file": "/root/dino/keyleak/all_files_hash/5443fae5b04b8dece593952b9e7c600b", "response": "secret_key='zEgTKP4vzVI0aWE3sC1EsMybKkSPHH'", "detected_keys": ["zEgTKP4vzVI0aWE3sC1EsMybKkSPHH"]},
+        {"file": "/root/dino/keyleak/all_files_hash/5506edd0d0a72791b72ea693e9a6e667", "response": "secret_key='settings.YANDEX_CAPTCHA_SERVER_KEY'", "detected_keys": ["settings.YANDEX_CAPTCHA_SERVER_KEY"]},
+        {"file": "/root/dino/keyleak/all_files_hash/55b9927be42265bbbd617f1141a7157a", "response": "secret_key='dtcon_ZnAoXhZcPtnobnVCLSgg'", "detected_keys": ["dtcon_ZnAoXhZcPtnobnVCLSgg"]},
+        {"file": "/root/dino/keyleak/all_files_hash/563f36484c2c661216271e422bdd60ec", "response": "secret_key='sekrit'", "detected_keys": ["sekrit"]},
+        {"file": "/root/dino/keyleak/all_files_hash/565dd158d48faf21cdd47c1a58e2bbce", "response": "secret_key='fake-super-secret-token'", "detected_keys": ["fake-super-secret-token"]},
+        {"file": "/root/dino/keyleak/all_files_hash/568d38644e8b0d21a66c027c6f0efd3a", "response": "secret_key='ru9-JsUrWiNLjWpLT0LeNoZzagirpTtFVa2yj9jIHv8='", "detected_keys": ["ru9-JsUrWiNLjWpLT0LeNoZzagirpTtFVa2yj9jIHv8="]},
+        {"file": "/root/dino/keyleak/all_files_hash/5759847844cd6cef86e249040cef5bd3", "response": "secret_key='qSQliHLwStBWT3nncdrN241UgdZdPM5H'", "detected_keys": ["qSQliHLwStBWT3nncdrN241UgdZdPM5H"]},
+        {"file": "/root/dino/keyleak/all_files_hash/5843faed6478236d9f5ff457e0eafbce", "response": "secret_key='secret'", "detected_keys": ["secret"]},
+        {"file": "/root/dino/keyleak/all_files_hash/58b7011927f105c10af88a2d5dd1d497", "response": "secret_key='e05dabf6fe0e-2c18-abf4-496d-1d010490'", "detected_keys": ["e05dabf6fe0e-2c18-abf4-496d-1d010490"]},
+        {"file": "/root/dino/keyleak/all_files_hash/58c8b8fa82408d9f39fd5a11800c1e5c", "response": "secret_key='h4s4bZMtjz1kJbJmj44Vip#ivQDrS.H6NTg0'", "detected_keys": ["h4s4bZMtjz1kJbJmj44Vip#ivQDrS.H6NTg0"]},
+        {"file": "/root/dino/keyleak/all_files_hash/58ce191d6df1fb490c33ac9b34232ba7", "response": "secret_key='asdf'", "detected_keys": ["asdf"]},
+        {"file": "/root/dino/keyleak/all_files_hash/5901c60a88351708811a7530380f2774", "response": "secret_key='faketoken'", "detected_keys": ["faketoken"]},
+        {"file": "/root/dino/keyleak/all_files_hash/592068642fae41970891ba50b722681b", "response": "```plaintext\nsecret_key='some-long-long-secret-only-for-wtforms-string-be-brave-if-you-use-it-on-prod'\n```", "detected_keys": ["some-long-long-secret-only-for-wtforms-string-be-brave-if-you-use-it-on-prod"]},
+        {"file": "/root/dino/keyleak/all_files_hash/594a010e7863fd07dfad770416d480ce", "response": "secret_key='09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7'", "detected_keys": ["09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"]},
+        {"file": "/root/dino/keyleak/all_files_hash/5994a445f56474371824cb8f8c9eec01", "response": "secret_key='0x20, 0x15'", "detected_keys": ["0x20, 0x15"]}]
+        
+\end{tcblisting}
+
+
+\end{document}

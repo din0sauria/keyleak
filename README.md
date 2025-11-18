@@ -4,7 +4,7 @@
 
 > 参考KEYSENTINEL完成的一款通用的密钥检测工具。
 
-> 注：我们基于本地的Qwen2.5-Coder-7B-Instruct-AWQ和低样本学习尝试实现LLM对密钥的检测（想依靠LLM的理解能力识别构造密钥），然后过滤并与检测结果合并实现了更高的成绩，但该服务器环境无法复现，不过代码（可直接运行）也放在了该目录下(llmdetect.py)。并在最后证明了有效性。
+> 注：我们基于本地的Qwen2.5-Coder-7B-Instruct-AWQ和低样本学习尝试实现LLM对密钥的检测（想依靠LLM的理解能力识别构造密钥），然后过滤并与检测结果合并实现了更高的成绩，代码（可直接运行）也放在了该目录下(llmdetect.py)。
 
 ## 运行命令
 
@@ -36,7 +36,8 @@ python main.py --input_path <test_path> --output_path <result_file_path>
 
 ### 1. 环境要求
 
-- Python 3.8
+- Linux（Windows需修改代码处理 module 'signal' has no attribute 'sigalrm' 错误。这是因为 Windows 不支持 Unix 信号，如 SIGALRM）
+- Python 3.8+
 - Node.js v16.17.1
 
 ### 2. 安装依赖
@@ -62,6 +63,7 @@ datacon2025/
 ├── get_strings/               # 字符串提取模块
 ├── data/                      # 数据资源目录
 └── asserts/                   # 用于保存README.md中的截图
+└── keyleaktex                 # write up
 ```
 
 #### base_func/ - 基础功能模块
@@ -146,5 +148,3 @@ datacon2025/
 成功检测出结果，显然是正则表达式做不到的：
 
 ![alt text](asserts/res.png)
-
-我们给出了部分原始检测结果(包括response和识别到的密钥数组)，在`data/complex_keys_results_gpu_1.json`。（原始检测结果的response和程序的成功提取最能证明LLM对构造密钥的检测的可行性）

@@ -1,0 +1,15 @@
+state
+__pycache__
+_minted
+*.aux
+*.bbl
+*.blg
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.thm
+*.synctex.gz
+*.fdb_latexmk
+
